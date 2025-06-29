@@ -18,15 +18,16 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 from requests_oauthlib import OAuth1Session
 
-DEBUG = True
+DEBUG = False
 DEBUG_BOARD_ID = "5f67b24e3bf4a71838a837cf"
+DOWNLOAD_ATTACHMENTS = True
 
 # ─── 1) LOAD ENV VARIABLES ─────────────────────────────────────────────────────
 load_dotenv()
-CONSUMER_KEY    = os.getenv("TRELLO_KEY")
+CONSUMER_KEY = os.getenv("TRELLO_KEY")
 CONSUMER_SECRET = os.getenv("TRELLO_SECRET")
-CALLBACK_URI    = os.getenv("TRELLO_RETURN_URL", "oob")
-API_BASE_URL    = os.getenv("TRELLO_API_URL", "https://api.trello.com/1")
+CALLBACK_URI = os.getenv("TRELLO_RETURN_URL", "oob")
+API_BASE_URL = os.getenv("TRELLO_API_URL", "https://api.trello.com/1")
 
 if not CONSUMER_KEY or not CONSUMER_SECRET:
     print("Error: TRELLO_KEY and TRELLO_SECRET must be set in .env", file=sys.stderr)
@@ -39,24 +40,24 @@ TOKEN_SECRET = os.getenv("TRELLO_TOKEN_SECRET")
 if not ACCESS_TOKEN or not TOKEN_SECRET:
     print("ℹ️  Starting Trello OAuth1 flow to obtain access token/secret…\n")
     oauth = OAuth1Session(
-        CONSUMER_KEY,
-        client_secret=CONSUMER_SECRET,
-        callback_uri=CALLBACK_URI
+        CONSUMER_KEY, client_secret=CONSUMER_SECRET, callback_uri=CALLBACK_URI
     )
     req = oauth.fetch_request_token("https://trello.com/1/OAuthGetRequestToken")
-    resource_owner_key    = req["oauth_token"]
+    resource_owner_key = req["oauth_token"]
     resource_owner_secret = req["oauth_token_secret"]
 
     auth_url = oauth.authorization_url(
         "https://trello.com/1/OAuthAuthorizeToken",
         name="Trello Exporter Script",
         scope="read",
-        expiration="never"
+        expiration="never",
     )
     print("1) Go to:\n   ▶️", auth_url, "\n")
     if CALLBACK_URI.lower() != "oob":
         print(f"After approving, you'll be redirected to: {CALLBACK_URI}\n")
-        verifier = input("2) Paste the 'oauth_verifier' parameter from the callback URL here: ").strip()
+        verifier = input(
+            "2) Paste the 'oauth_verifier' parameter from the callback URL here: "
+        ).strip()
     else:
         verifier = input("2) Enter the Trello PIN here: ").strip()
 
@@ -65,7 +66,7 @@ if not ACCESS_TOKEN or not TOKEN_SECRET:
         client_secret=CONSUMER_SECRET,
         resource_owner_key=resource_owner_key,
         resource_owner_secret=resource_owner_secret,
-        verifier=verifier
+        verifier=verifier,
     )
     tokens = oauth.fetch_access_token("https://trello.com/1/OAuthGetAccessToken")
     ACCESS_TOKEN = tokens["oauth_token"]
@@ -78,6 +79,7 @@ if not ACCESS_TOKEN or not TOKEN_SECRET:
     print("   TRELLO_TOKEN_SECRET=", TOKEN_SECRET)
     print("\n—then re-run this script to skip authorization next time.\n")
 
+
 # ─── 3) PREPARE OAUTH1 SESSION ──────────────────────────────────────────────────
 def oauth1_session():
     return OAuth1Session(
@@ -85,8 +87,9 @@ def oauth1_session():
         client_secret=CONSUMER_SECRET,
         resource_owner_key=ACCESS_TOKEN,
         resource_owner_secret=TOKEN_SECRET,
-        callback_uri=CALLBACK_URI
+        callback_uri=CALLBACK_URI,
     )
+
 
 # ─── 4) TRELLLO HELPER FUNCTIONS ────────────────────────────────────────────────
 def trello_get(endpoint: str, **params):
@@ -112,68 +115,79 @@ def download_file(url: str, dest: Path):
         for chunk in resp.iter_content(8192):
             f.write(chunk)
 
+
 # ─── 5) EXPORT LOGIC ────────────────────────────────────────────────────────────
 def export_board(board):
-    board_id   = board["id"]
+    board_id = board["id"]
     board_name = board["name"]
     print(f"\n📋 Exporting board: {board_name} ({board_id})")
-    slug      = "".join(c if c.isalnum() else "_" for c in board_name)
+    slug = "".join(c if c.isalnum() else "_" for c in board_name)
     board_dir = Path(slug)
-    data = trello_get(f"/boards/{board_id}",
+    board_dir.mkdir(parents=True, exist_ok=True)
+    data = trello_get(
+        f"/boards/{board_id}",
         lists="all",
         cards="all",
         checklists="all",
         card_attachments="true",
         attachment_fields="name,url",
-        fields="name,desc,closed,dateLastActivity"
+        fields="name,desc,closed,dateLastActivity",
     )
 
     # For each card, download attachments matching Trello card URLs
-    for card in data.get('cards', []):
-        if DEBUG and card.get('idList') != DEBUG_BOARD_ID:
+    for card in data.get("cards", []):
+        if not DOWNLOAD_ATTACHMENTS:
             continue
-        atts = card.get('attachments', []) or trello_get(f"/cards/{card['id']}/attachments")
+        if DEBUG and card.get("idList") != DEBUG_BOARD_ID:
+            continue
+        atts = card.get("attachments", []) or trello_get(
+            f"/cards/{card['id']}/attachments"
+        )
 
         # filter relevant URLs and keep attachment objects
         def is_trello_card_image(att):
-            url = att.get('url', '')
-            return bool(url) and 'trello.com' in url and '/cards/' in url
+            url = att.get("url", "")
+            return bool(url) and "trello.com" in url and "/cards/" in url
 
         atts_with_images = [att for att in atts if is_trello_card_image(att)]
-        atts_with_urls   = [att for att in atts if att.get('url') and not is_trello_card_image(att)]
+        atts_with_urls = [
+            att for att in atts if att.get("url") and not is_trello_card_image(att)
+        ]
 
         if atts_with_urls:
-            urls = [att.get('url') for att in atts_with_urls]
+            urls = [att.get("url") for att in atts_with_urls]
             print("urls: ", urls)
-            card['local_attachments'] = urls
+            card["local_attachments"] = urls
 
         if not atts_with_images:
             continue
         # only create attachments directory if needed
         attachments_dir = board_dir / "attachments"
         attachments_dir.mkdir(parents=True, exist_ok=True)
-        card_id = card['id']
+        card_id = card["id"]
         for att in atts_with_images:
-            url = att.get('url')
+            url = att.get("url")
             # extract attachment ID from URL
-            path_parts = urlparse(url).path.split('/')
+            path_parts = urlparse(url).path.split("/")
             try:
-                att_idx = path_parts.index('attachments') + 1
+                att_idx = path_parts.index("attachments") + 1
                 attachment_id = path_parts[att_idx]
             except (ValueError, IndexError):
-                attachment_id = 'unknown'
+                attachment_id = "unknown"
 
             # create directory with card_id and attachment_id
             att_dir = attachments_dir / f"{card_id}_{attachment_id}"
             att_dir.mkdir(exist_ok=True)
             # extract filename
-            filename = att.get('name') or path_parts[-1]
-            safe_name = ''.join(ch if ch.isalnum() or ch in '._-' else '_' for ch in filename)
+            filename = att.get("name") or path_parts[-1]
+            safe_name = "".join(
+                ch if ch.isalnum() or ch in "._-" else "_" for ch in filename
+            )
             dest = att_dir / safe_name
             print(f"↓ Downloading {safe_name} to {card_id}_{attachment_id}/")
             try:
                 download_file(url, dest)
-                card.setdefault('local_attachments', []).append(f"{dest}")
+                card.setdefault("local_attachments", []).append(f"{dest}")
             except Exception as e:
                 print(f"⚠️ Failed {safe_name}: {e}")(
                     f"/boards/{board_id}",
@@ -182,7 +196,7 @@ def export_board(board):
                     checklists="all",
                     card_attachments="true",
                     attachment_fields="name,url",
-                    fields="name,desc,closed,dateLastActivity"
+                    fields="name,desc,closed,dateLastActivity",
                 )
                 dest = "failed"
 
@@ -198,17 +212,33 @@ def export_board(board):
 def export_csv(all_boards):
     """Export combined CSV of all boards data."""
     csv_file = Path("trello_export.csv")
-    with open(csv_file, "w", newline='', encoding="utf-8") as csvf:
+    with open(csv_file, "w", newline="", encoding="utf-8") as csvf:
         writer = csv.writer(csvf)
         writer.writerow(["board", "list", "item", "description", "attachments"])
         for data, board_name in all_boards:
-            lists = {lst['id']: lst['name'] for lst in data.get('lists', [])}
-            for card in data.get('cards', []):
-                list_name = lists.get(card['idList'], '')
-                item = card.get('name', '')
-                desc = card.get('desc', '').replace('\n', ' ')
-                atts = ';'.join(card.get('local_attachments', []))
+            lists = {lst["id"]: lst["name"] for lst in data.get("lists", [])}
+            for card in data.get("cards", []):
+                list_name = lists.get(card["idList"], "")
+                item = card.get("name", "")
+                desc = card.get("desc", "").replace("\n", " ").replace("\r", " ")
+
+                # Handle local_attachments more robustly
+                local_atts = card.get("local_attachments", [])
+                if isinstance(local_atts, list):
+                    # Convert Path objects to strings and filter out empty/None values
+                    att_strings = []
+                    for att in local_atts:
+                        if att:  # Skip None or empty values
+                            att_str = str(att) if not isinstance(att, str) else att
+                            att_strings.append(att_str)
+                    atts = ";".join(att_strings)
+                else:
+                    # Handle case where local_attachments is not a list
+                    atts = str(local_atts) if local_atts else ""
+
                 writer.writerow([board_name, list_name, item, desc, atts])
+                if atts:
+                    print("csv: ", [board_name, list_name, item, desc, atts])
     print(f"✅ Wrote CSV: {csv_file}")
 
 
@@ -228,6 +258,7 @@ def main():
 
     export_csv(all_data)
     print("\n🎉 All done.")
+
 
 if __name__ == "__main__":
     main()

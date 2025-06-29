@@ -1,0 +1,6 @@
+TRELLO_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TRELLO_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+TRELLO_RETURN_URL=https://COMPANY.COM
+
+# TRELLO_TOKEN=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# TRELLO_TOKEN_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
